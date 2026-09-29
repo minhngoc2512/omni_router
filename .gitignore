@@ -8,6 +8,11 @@ data/
 logs/
 redis/
 
+# Previous state kept by restore.sh + its staging dir
+*.pre-restore-*
+*.discarded-*
+.restore.*/
+
 # Backup files (contain secrets)
 backups/
 *.zip

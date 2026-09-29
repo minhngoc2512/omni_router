@@ -154,9 +154,7 @@ if [ "$status" != "healthy" ]; then
 Roll back to the previous version ($CUR_VER):
   ./update.sh $CUR_VER --no-backup
 If the new version already migrated the DB and the old version will not start, restore the backup:
-  docker compose down && mv data data.failed
-  unzip -o ${BACKUP_FILE:-backups/<backup-file>.zip} -x BACKUP_INFO.txt
-  docker compose up -d
+  ./restore.sh ${BACKUP_FILE:-backups/<backup-file>.zip}
 EOF
   exit 1
 fi

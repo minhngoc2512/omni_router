@@ -10,6 +10,7 @@ Runs [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (an AI gateway that 
 ├── setup.sh             # first-time setup script (safe to re-run)
 ├── backup.sh            # back up .env + data/ into a .zip file
 ├── update.sh            # update the image to a new version + restart
+├── restore.sh           # restore .env + data/ from a backup .zip
 ├── .env.example         # configuration template (committed)
 ├── .env                 # real configuration + secrets (NOT committed)
 ├── data/                # SQLite DB, automatic backups, server.env   (created at runtime, not committed)
@@ -123,7 +124,7 @@ Options: `--no-backup` skips step 3; `--force` recreates the container even if t
 
 **Which tag to use?** `latest` always follows the newest stable release — convenient, but it can upgrade unintentionally whenever `docker compose pull` runs. For production, **pin a specific version** (`./update.sh 3.8.50`) and upgrade deliberately after reading the [release notes](https://github.com/diegosouzapw/OmniRoute/releases).
 
-**Rolling back:** run `./update.sh <old-version>` (the script prints this command after every update). If the new version has already migrated the DB and the old version will not start, restore the backup the script created right before the update (see [Restore](#restore)).
+**Rolling back:** run `./update.sh <old-version>` (the script prints this command after every update). If the new version has already migrated the DB and the old version will not start, restore the backup the script created right before the update: `./restore.sh --latest` (see [Restore](#restore)).
 
 Manual update (without the script):
 
@@ -184,10 +185,33 @@ Run it daily at 3 AM (`crontab -e`):
 
 ### Restore
 
+Use `restore.sh`:
+
+```bash
+./restore.sh --list                  # list backups in BACKUP_DIR (newest first)
+./restore.sh --latest                # restore the newest backup
+./restore.sh backups/omniroute-backup-YYYYmmdd-HHMMSS.zip
+./restore.sh <file.zip> --keep-env   # keep the current .env (only if the data-bound secrets match)
+./restore.sh <file.zip> --yes        # no confirmation prompt (required when not run interactively)
+```
+
+What the script does:
+
+1. **Verifies before touching anything**: the zip must pass `unzip -t`, contain `data/storage.sqlite` (and `.env`), and the DB snapshot must pass `PRAGMA quick_check`. If any check fails, nothing is changed.
+2. Shows what it is about to do and asks for confirmation.
+3. Stops the `omniroute` container.
+4. **Deletes nothing**: renames the current data dir and `.env` to `data.pre-restore-<timestamp>` / `.env.pre-restore-<timestamp>`, then puts the backup's `data/` into a fresh directory (so no stale `storage.sqlite-wal`/`-shm` can be applied to the restored DB).
+5. Restores `.env` from the backup, because `API_KEY_SECRET` must match the restored DB. With `--keep-env` it keeps the current `.env`, but refuses if `API_KEY_SECRET` / `STORAGE_ENCRYPTION_KEY` differ from the backup.
+6. Starts the stack and waits until it is healthy. If it is not, it prints the logs and the exact commands to undo the restore.
+
+`logs/` and `docker-compose.yml` inside the zip are not restored (the compose file is tracked in git). Once you have verified the restore, delete the `*.pre-restore-*` directories/files to free up space.
+
+Manual restore (without the script):
+
 ```bash
 docker compose down
 mv data data.old                     # keep the current data just in case
-unzip -o backups/omniroute-backup-XXXXXXXX-XXXXXX.zip -x BACKUP_INFO.txt
+unzip -o backups/omniroute-backup-XXXXXXXX-XXXXXX.zip .env 'data/*'
 docker compose up -d
 ```
 

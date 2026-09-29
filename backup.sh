@@ -117,9 +117,11 @@ Image     : $IMAGE
 Contents  : ${ITEMS[*]} (data/storage.sqlite is a consistent snapshot; data/db_backups/ excluded)
 
 RESTORE (inside the project directory):
+  ./restore.sh $NAME.zip
+or manually:
   docker compose down
   mv data data.old            # keep the current data just in case
-  unzip -o $NAME.zip -x BACKUP_INFO.txt
+  unzip -o $NAME.zip .env 'data/*'
   docker compose up -d
 EOF
 
