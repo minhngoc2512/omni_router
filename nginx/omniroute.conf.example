@@ -1,0 +1,63 @@
+# OmniRoute behind nginx (e.g. Cloudflare → nginx :80 → OmniRoute)
+#
+# Install (replace omni.example.com with your domain):
+#   sudo cp nginx/omniroute.conf.example /etc/nginx/sites-available/omniroute.conf
+#   sudo ln -s /etc/nginx/sites-available/omniroute.conf /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Matching settings in .env (then `docker compose up -d`):
+#   NEXT_PUBLIC_BASE_URL=https://omni.example.com
+#   NEXT_PUBLIC_LIVE_WS_PUBLIC_URL=wss://omni.example.com/live-ws
+#   LIVE_WS_ALLOWED_ORIGINS=http://localhost:20128,https://omni.example.com
+#
+# Ports must match PORT / LIVE_WS_PORT in .env (defaults 20128 / 20132).
+
+# Upgrade → "upgrade" for WebSocket requests, "close" otherwise.
+# Uniquely named so it cannot clash with a map defined by another site.
+map $http_upgrade $omniroute_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    server_name omni.example.com;
+
+    client_max_body_size 50M;
+
+    # Realtime dashboard WebSocket → OmniRoute LiveWS server (LIVE_WS_PORT).
+    # The browser authenticates with the dashboard session cookie (same origin)
+    # and the server checks Origin against LIVE_WS_ALLOWED_ORIGINS.
+    location /live-ws {
+        proxy_pass http://127.0.0.1:20132;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $omniroute_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        # Long-lived connection; the server pings every 15s, so this only
+        # bounds a truly dead connection.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Dashboard + API (/v1/*)
+    location / {
+        proxy_pass http://127.0.0.1:20128;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # TLS is terminated in front of nginx (Cloudflare); tell OmniRoute it was HTTPS
+        proxy_set_header X-Forwarded-Proto https;
+        # Stream LLM responses (SSE) without buffering
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

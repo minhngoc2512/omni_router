@@ -11,6 +11,8 @@ Runs [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (an AI gateway that 
 ├── backup.sh            # back up .env + data/ into a .zip file
 ├── update.sh            # update the image to a new version + restart
 ├── restore.sh           # restore .env + data/ from a backup .zip
+├── nginx/
+│   └── omniroute.conf.example   # nginx reverse proxy (dashboard/API + /live-ws WebSocket)
 ├── .env.example         # configuration template (committed)
 ├── .env                 # real configuration + secrets (NOT committed)
 ├── data/                # SQLite DB, automatic backups, server.env   (created at runtime, not committed)
@@ -91,6 +93,18 @@ Full list of environment variables: [upstream OmniRoute .env.example](https://gi
 2. `NEXT_PUBLIC_BASE_URL=https://your-domain`
 3. Add `https://your-domain` to `LIVE_WS_ALLOWED_ORIGINS`
 4. `AUTH_COOKIE_SECURE=true`
+5. Realtime dashboard: the LiveWS server listens on its own port (`LIVE_WS_PORT`, 20132), which is not reachable through the proxy. Proxy `/live-ws` to it and set `NEXT_PUBLIC_LIVE_WS_PUBLIC_URL=wss://your-domain/live-ws`.
+
+A ready-made nginx config (dashboard/API + `/live-ws` WebSocket, SSE streaming without buffering) is in [`nginx/omniroute.conf.example`](nginx/omniroute.conf.example):
+
+```bash
+sed 's/omni.example.com/your-domain/g' nginx/omniroute.conf.example | sudo tee /etc/nginx/sites-available/omniroute.conf
+sudo ln -s /etc/nginx/sites-available/omniroute.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+docker compose up -d        # after setting NEXT_PUBLIC_LIVE_WS_PUBLIC_URL in .env
+```
+
+The WebSocket authenticates with the dashboard session cookie (same origin) and the server rejects origins not in `LIVE_WS_ALLOWED_ORIGINS` (close code 4003). With Cloudflare in front, keep **Network → WebSockets** enabled (default), and note that Cloudflare cuts non-streaming requests after 100s — use streaming for long responses.
 
 ## Operations
 
