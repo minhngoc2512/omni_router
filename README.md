@@ -1,58 +1,60 @@
-# OmniRoute — triển khai bằng Docker Compose
+# OmniRoute — Docker Compose deployment
 
-Cấu hình chạy [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (AI gateway gom nhiều LLM provider về một endpoint OpenAI-compatible) bằng image chính thức `diegosouzapw/omniroute`, lưu toàn bộ dữ liệu ngay trong thư mục dự án.
+Runs [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (an AI gateway that unifies many LLM providers behind a single OpenAI-compatible endpoint) using the official `diegosouzapw/omniroute` image, with all data stored inside the project directory.
 
-## Cấu trúc
+## Layout
 
 ```
 .
-├── docker-compose.yml   # service omniroute + redis
-├── setup.sh             # script cài đặt lần đầu (chạy lại an toàn)
-├── backup.sh            # backup .env + data/ thành file .zip
-├── .env.example         # mẫu cấu hình (commit)
-├── .env                 # cấu hình thật + secret (KHÔNG commit)
-├── data/                # SQLite DB, backup tự động, server.env   (tự tạo, không commit)
-├── logs/                # app.log                                   (tự tạo, không commit)
-├── redis/               # dữ liệu Redis                             (tự tạo, không commit)
-└── backups/             # file backup .zip                          (tự tạo, không commit)
+├── docker-compose.yml   # omniroute + redis services
+├── setup.sh             # first-time setup script (safe to re-run)
+├── backup.sh            # back up .env + data/ into a .zip file
+├── update.sh            # update the image to a new version + restart
+├── .env.example         # configuration template (committed)
+├── .env                 # real configuration + secrets (NOT committed)
+├── data/                # SQLite DB, automatic backups, server.env   (created at runtime, not committed)
+├── logs/                # app.log                                     (created at runtime, not committed)
+├── redis/               # Redis data                                  (created at runtime, not committed)
+└── backups/             # .zip backup files                           (created at runtime, not committed)
 ```
 
-| Service           | Image                              | Port                                      |
-| ----------------- | ---------------------------------- | ----------------------------------------- |
-| `omniroute`       | `diegosouzapw/omniroute:latest`    | `20128` dashboard + API, `20132` live WS  |
-| `omniroute-redis` | `redis:8-alpine`                   | chỉ trong mạng nội bộ compose             |
+| Service           | Image                           | Port                                     |
+| ----------------- | ------------------------------- | ---------------------------------------- |
+| `omniroute`       | `diegosouzapw/omniroute:latest` | `20128` dashboard + API, `20132` live WS |
+| `omniroute-redis` | `redis:8-alpine`                | internal compose network only            |
 
-## Yêu cầu
+## Requirements
 
 - Docker Engine + Docker Compose v2
-- User chạy lệnh có **uid 1000** (image chạy bằng user `node` uid 1000). Nếu uid khác, xem [Xử lý sự cố](#xử-lý-sự-cố).
+- `openssl`, `zip`, `unzip`, `python3` (used by the scripts)
+- The user running the commands should have **uid 1000** (the image runs as user `node`, uid 1000). If your uid differs, see [Troubleshooting](#troubleshooting).
 
-## Cài đặt lần đầu
+## First-time setup
 
 ```bash
-./setup.sh               # tạo .env, sinh secret, tạo thư mục data/logs/redis
+./setup.sh               # create .env, generate secrets, create data/logs/redis directories
 docker compose up -d
-docker compose ps        # chờ omniroute chuyển sang (healthy)
+docker compose ps        # wait until omniroute is (healthy)
 ```
 
-`setup.sh` thực hiện:
+`setup.sh` does the following:
 
-1. Tạo `.env` từ `.env.example` (chỉ khi chưa có) và `chmod 600`
-2. Sinh ngẫu nhiên các secret **đang trống**: `INITIAL_PASSWORD`, `JWT_SECRET`, `API_KEY_SECRET`, `OMNIROUTE_WS_BRIDGE_SECRET`, `MACHINE_ID_SALT`
-3. Tạo thư mục theo `DATA_PATH`, `LOG_PATH`, `REDIS_DATA_PATH` (tránh Docker tạo với owner root) và cảnh báo nếu owner khác uid 1000
+1. Creates `.env` from `.env.example` (only if it does not exist yet) and runs `chmod 600` on it
+2. Generates random values for secrets that are **empty**: `INITIAL_PASSWORD`, `JWT_SECRET`, `API_KEY_SECRET`, `OMNIROUTE_WS_BRIDGE_SECRET`, `MACHINE_ID_SALT`
+3. Creates the directories from `DATA_PATH`, `LOG_PATH`, `REDIS_DATA_PATH` (so Docker does not create them as root) and warns if their owner is not uid 1000
 
-Có thể chạy lại bất cứ lúc nào, script tự kiểm tra trạng thái:
+It can be re-run at any time; the script checks the current state first:
 
-- Không ghi đè giá trị đã có trong `.env`, không xoá hay sửa dữ liệu trong `data/`, `logs/`, `redis/`
-- Nếu đã có DB (`data/storage.sqlite`) mà **thiếu `.env`** hoặc **`API_KEY_SECRET` trống** → dừng và báo lỗi, vì sinh key mới sẽ làm hỏng API key đã mã hoá. Hãy khôi phục `.env` từ backup.
-- Bỏ qua `INITIAL_PASSWORD` nếu DB đã khởi tạo (biến này chỉ dùng ở lần chạy đầu)
-- Liệt kê các biến có trong `.env.example` nhưng `.env` chưa có (sau khi pull bản cấu hình mới)
+- It never overwrites existing values in `.env` and never deletes or modifies anything in `data/`, `logs/`, `redis/`
+- If a DB already exists (`data/storage.sqlite`) but **`.env` is missing** or **`API_KEY_SECRET` is empty** → it stops with an error, because generating a new key would break the encrypted API keys. Restore `.env` from a backup instead.
+- It skips `INITIAL_PASSWORD` if the DB is already initialized (this variable is only used on first boot)
+- It lists variables present in `.env.example` but missing from `.env` (e.g. after pulling a newer config template)
 
-Mở http://localhost:20128 và đăng nhập bằng `INITIAL_PASSWORD` trong `.env`. Sau đó nên đổi mật khẩu tại **Settings → Security**.
+Open http://localhost:20128 and log in with `INITIAL_PASSWORD` from `.env`. Then change the password under **Settings → Security**.
 
-## Sử dụng
+## Usage
 
-Vì `REQUIRE_API_KEY=true`, cần tạo API key tại **Dashboard → API Keys** trước khi gọi API:
+Because `REQUIRE_API_KEY=true`, create an API key under **Dashboard → API Keys** before calling the API:
 
 ```bash
 curl http://localhost:20128/v1/chat/completions \
@@ -61,110 +63,146 @@ curl http://localhost:20128/v1/chat/completions \
   -d '{"model": "<provider>/<model>", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-Base URL cho các client OpenAI-compatible: `http://localhost:20128/v1`
+Base URL for OpenAI-compatible clients: `http://localhost:20128/v1`
 
-## Cấu hình (`.env`)
+## Configuration (`.env`)
 
-| Nhóm       | Biến                                                              | Ghi chú                                                                         |
-| ---------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Image      | `OMNIROUTE_IMAGE_TAG`                                             | `latest` hoặc pin phiên bản (vd `3.8.50`)                                        |
-| RAM        | `OMNIROUTE_MEMORY_MB`, `CONTAINER_MEM_LIMIT`                      | Dùng cho coding agent (Claude Code, Codex…) nên `8192` / `10g`                   |
-| Port       | `BIND_ADDRESS`, `PORT`, `LIVE_WS_PORT`                            | `127.0.0.1` = chỉ máy local; `0.0.0.0` = mở ra LAN                               |
-| URL public | `NEXT_PUBLIC_BASE_URL`, `LIVE_WS_ALLOWED_ORIGINS`                 | Sửa khi truy cập qua domain/IP khác localhost                                   |
-| Auth       | `INITIAL_PASSWORD`, `JWT_SECRET`, `API_KEY_SECRET`, `REQUIRE_API_KEY`, `AUTH_COOKIE_SECURE` | `AUTH_COOKIE_SECURE=true` khi chạy sau HTTPS              |
-| Dữ liệu    | `DATA_PATH`, `REDIS_DATA_PATH`                                    | Đường dẫn trên host                                                              |
-| Log        | `LOG_PATH`, `APP_LOG_LEVEL`, `APP_LOG_MAX_FILE_SIZE`, `APP_LOG_RETENTION_DAYS`, `DOCKER_LOG_MAX_SIZE` | Log file app + giới hạn `docker logs`   |
+| Group      | Variables                                                                                             | Notes                                                       |
+| ---------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Image      | `OMNIROUTE_IMAGE_TAG`                                                                                 | `latest` or a pinned version (e.g. `3.8.50`)                |
+| RAM        | `OMNIROUTE_MEMORY_MB`, `CONTAINER_MEM_LIMIT`                                                          | For coding agents (Claude Code, Codex…) use `8192` / `10g`  |
+| Ports      | `BIND_ADDRESS`, `PORT`, `LIVE_WS_PORT`                                                                | `127.0.0.1` = local machine only; `0.0.0.0` = open to LAN   |
+| Public URL | `NEXT_PUBLIC_BASE_URL`, `LIVE_WS_ALLOWED_ORIGINS`                                                     | Change when accessing via a domain/IP other than localhost  |
+| Auth       | `INITIAL_PASSWORD`, `JWT_SECRET`, `API_KEY_SECRET`, `REQUIRE_API_KEY`, `AUTH_COOKIE_SECURE`           | Set `AUTH_COOKIE_SECURE=true` when served over HTTPS        |
+| Data       | `DATA_PATH`, `REDIS_DATA_PATH`                                                                        | Host paths                                                  |
+| Logs       | `LOG_PATH`, `APP_LOG_LEVEL`, `APP_LOG_MAX_FILE_SIZE`, `APP_LOG_RETENTION_DAYS`, `DOCKER_LOG_MAX_SIZE` | App log file + `docker logs` limits                         |
+| Backup     | `BACKUP_DIR`, `BACKUP_KEEP`                                                                           | Used by `backup.sh`                                         |
 
-Sau khi sửa `.env`, áp dụng bằng `docker compose up -d` (compose tự tạo lại container khi cấu hình thay đổi).
+After editing `.env`, apply it with `docker compose up -d` (compose recreates the container when its configuration changes).
 
-Danh sách đầy đủ các biến môi trường: [.env.example gốc của OmniRoute](https://github.com/diegosouzapw/OmniRoute/blob/main/.env.example).
+Full list of environment variables: [upstream OmniRoute .env.example](https://github.com/diegosouzapw/OmniRoute/blob/main/.env.example).
 
-### Mở ra ngoài / chạy sau reverse proxy
+### Exposing it / running behind a reverse proxy
 
-1. Để `BIND_ADDRESS=127.0.0.1` nếu reverse proxy (nginx, Caddy…) chạy trên cùng máy; đổi `0.0.0.0` nếu cần truy cập trực tiếp qua LAN.
+1. Keep `BIND_ADDRESS=127.0.0.1` if the reverse proxy (nginx, Caddy…) runs on the same host; use `0.0.0.0` for direct LAN access.
 2. `NEXT_PUBLIC_BASE_URL=https://your-domain`
-3. Thêm `https://your-domain` vào `LIVE_WS_ALLOWED_ORIGINS`
+3. Add `https://your-domain` to `LIVE_WS_ALLOWED_ORIGINS`
 4. `AUTH_COOKIE_SECURE=true`
 
-## Vận hành
+## Operations
 
 ```bash
-docker compose logs -f omniroute                # log stdout
-tail -f logs/app.log                            # log file của app
+docker compose logs -f omniroute                # stdout logs
+tail -f logs/app.log                            # app log file
 docker compose restart omniroute                # restart
-docker compose down                             # dừng (dữ liệu giữ nguyên)
-docker compose pull && docker compose up -d     # cập nhật image mới
+docker compose down                             # stop (data is kept)
+docker compose up -d                            # apply changes to .env / docker-compose.yml
+./update.sh                                     # update to a new version (see below)
 ```
 
-## Xoay vòng log & giới hạn dung lượng
+## Updating
 
-Mọi thứ ghi ra đĩa đều có giới hạn (theo cấu hình mặc định trong `.env.example`):
-
-| Nguồn                          | Vị trí               | Cơ chế                                                                                   | Tối đa khoảng   |
-| ------------------------------ | -------------------- | ---------------------------------------------------------------------------------------- | --------------- |
-| Log ứng dụng                   | `logs/app*.log`      | Kiểm tra mỗi phút: > `APP_LOG_MAX_FILE_SIZE` → đổi tên, tạo file mới; giữ `APP_LOG_MAX_FILES` file | (10+1) × 50M ≈ **550 MB** |
-| `docker logs` (stdout)         | `/var/lib/docker/…`  | Docker json-file tự xoay: `DOCKER_LOG_MAX_SIZE` × `DOCKER_LOG_MAX_FILE` mỗi container     | 2 × 100 MB      |
-| Backup DB tự động              | `data/db_backups/`   | Tối đa 1 bản/giờ; giữ `DB_BACKUP_MAX_FILES` bản, xoá bản cũ hơn `DB_BACKUP_RETENTION_DAYS` | 5 × kích thước DB |
-| Log request/call               | trong SQLite `data/` | Xoá sau `CALL_LOG_RETENTION_DAYS` ngày, cắt bớt khi vượt `*_TABLE_MAX_ROWS` dòng          | theo số dòng    |
-
-Ghi chú:
-
-- File log đã xoay cũ hơn `APP_LOG_RETENTION_DAYS` chỉ bị xoá **khi khởi động**. Trong lúc chạy, dung lượng được giới hạn bằng số file (`APP_LOG_MAX_FILES`).
-- Mỗi bản backup là bản sao đầy đủ của DB. Khi DB lớn lên, hãy giảm `DB_BACKUP_MAX_FILES`.
-- Không cần `logrotate` bên ngoài. Nếu dùng thêm thì **không** dùng `copytruncate`, vì OmniRoute tự đổi tên file.
-
-Xem dung lượng đang dùng:
+Use `update.sh`. It backs up, pulls the image, restarts and waits for the container to become healthy:
 
 ```bash
-du -sh data data/db_backups logs redis
+./update.sh --check          # show the running version & latest stable versions on Docker Hub (changes nothing)
+./update.sh                  # update to the newest image for the tag in .env (default: latest)
+./update.sh 3.8.50           # switch to a specific version — also used to roll back
+```
+
+What the script does:
+
+1. `docker compose pull` for the tag. If the pull fails (e.g. the tag does not exist) it stops immediately and **changes nothing**.
+2. If the image did not change → reports "already up to date" and **does not restart the container**.
+3. Runs `./backup.sh` before updating, since a new version may migrate the DB. If the backup fails, it stops.
+4. If a specific version was given → writes it to `OMNIROUTE_IMAGE_TAG` in `.env`.
+5. `docker compose up -d` → waits for healthy (up to 240s, configurable via the `HEALTH_TIMEOUT` environment variable).
+6. If it does not become healthy → prints the last 50 log lines plus the commands to roll back and to restore the backup.
+
+Options: `--no-backup` skips step 3; `--force` recreates the container even if the image did not change.
+
+**Which tag to use?** `latest` always follows the newest stable release — convenient, but it can upgrade unintentionally whenever `docker compose pull` runs. For production, **pin a specific version** (`./update.sh 3.8.50`) and upgrade deliberately after reading the [release notes](https://github.com/diegosouzapw/OmniRoute/releases).
+
+**Rolling back:** run `./update.sh <old-version>` (the script prints this command after every update). If the new version has already migrated the DB and the old version will not start, restore the backup the script created right before the update (see [Restore](#restore)).
+
+Manual update (without the script):
+
+```bash
+./backup.sh
+docker compose pull
+docker compose up -d
+docker compose ps            # wait for (healthy)
+docker image prune           # remove old unused images
+```
+
+## Log rotation & disk usage limits
+
+Everything written to disk is bounded (with the defaults from `.env.example`):
+
+| Source                 | Location              | Mechanism                                                                                                    | Approx. maximum           |
+| ---------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| App log                | `logs/app*.log`       | Checked every minute: > `APP_LOG_MAX_FILE_SIZE` → renamed, new file created; keeps `APP_LOG_MAX_FILES` files | (10+1) × 50M ≈ **550 MB** |
+| `docker logs` (stdout) | `/var/lib/docker/…`   | Docker json-file rotation: `DOCKER_LOG_MAX_SIZE` × `DOCKER_LOG_MAX_FILE` per container                       | 2 × 100 MB                |
+| Automatic DB backups   | `data/db_backups/`    | At most 1 per hour; keeps `DB_BACKUP_MAX_FILES` copies, deletes those older than `DB_BACKUP_RETENTION_DAYS`  | 5 × DB size               |
+| Request/call logs      | inside SQLite `data/` | Deleted after `CALL_LOG_RETENTION_DAYS` days, trimmed when exceeding `*_TABLE_MAX_ROWS` rows                 | bounded by row count      |
+
+Notes:
+
+- Rotated log files older than `APP_LOG_RETENTION_DAYS` are only deleted **at startup**. While running, disk usage is bounded by the file count (`APP_LOG_MAX_FILES`).
+- Each DB backup is a full copy of the DB. As the DB grows, lower `DB_BACKUP_MAX_FILES`.
+- No external `logrotate` is needed. If you add one anyway, do **not** use `copytruncate`, since OmniRoute rotates by renaming the file.
+
+Check current usage:
+
+```bash
+du -sh data data/db_backups logs redis backups
 docker system df -v | grep omniroute
 ```
 
-## Backup & khôi phục
+## Backup & restore
 
-> ⚠️ **Không xoá `data/server.env`.** Lần chạy đầu, OmniRoute tự sinh key mã hoá DB (`STORAGE_ENCRYPTION_KEY`) và lưu vào file này. Mất file → không đọc được DB. Tương tự, đổi `API_KEY_SECRET` sau khi đã có dữ liệu sẽ làm hỏng các key đã lưu.
+> ⚠️ **Do not delete `data/server.env`.** On first boot OmniRoute generates the DB encryption key (`STORAGE_ENCRYPTION_KEY`) and stores it in this file. Lose it → the DB can no longer be read. Likewise, changing `API_KEY_SECRET` once data exists breaks the stored keys.
 
-Dùng `backup.sh` để nén `.env`, `docker-compose.yml` và `data/` thành một file `.zip`. **Không cần dừng container.**
+Use `backup.sh` to archive `.env`, `docker-compose.yml` and `data/` into a single `.zip` file. **No need to stop the container.**
 
 ```bash
-./backup.sh                          # → backups/omniroute-backup-YYYYmmdd-HHMMSS.zip
-./backup.sh --with-logs              # kèm thư mục logs/
-./backup.sh -o /mnt/nas/omniroute -k 30   # thư mục đích khác, giữ 30 bản
+./backup.sh                               # → backups/omniroute-backup-YYYYmmdd-HHMMSS.zip
+./backup.sh --with-logs                   # also include logs/
+./backup.sh -o /mnt/nas/omniroute -k 30   # different destination, keep 30 backups
 ```
 
-- DB được snapshot bằng SQLite online backup API, nên bản backup nhất quán ngay cả khi app đang ghi. Snapshot được kiểm tra bằng `PRAGMA quick_check`, file zip được kiểm tra bằng `unzip -t`.
-- Không đưa `data/db_backups/` vào zip (đó là các bản sao DB do OmniRoute tự tạo).
-- Chỉ giữ `BACKUP_KEEP` bản mới nhất trong `BACKUP_DIR` (cấu hình ở mục 6 của `.env`).
-- File zip có quyền `600`, thư mục backup có quyền `700`. **File zip chứa secret**, nên hãy cất ở nơi an toàn và copy ra ngoài máy này. `backups/` và `*.zip` đã có trong `.gitignore`.
+- The DB is snapshotted via the SQLite online backup API, so the backup is consistent even while the app is writing. The snapshot is verified with `PRAGMA quick_check` and the zip with `unzip -t`.
+- `data/db_backups/` is not included (those are OmniRoute's own DB copies).
+- Only the newest `BACKUP_KEEP` backups are kept in `BACKUP_DIR` (section 6 of `.env`).
+- Zip files are mode `600` and the backup directory is `700`. **The zip contains secrets**, so store it somewhere safe and copy it off this machine. `backups/` and `*.zip` are already in `.gitignore`.
 
-Chạy tự động hằng ngày lúc 3h sáng (`crontab -e`):
+Run it daily at 3 AM (`crontab -e`):
 
 ```cron
-0 3 * * * /đường/dẫn/omni_router/backup.sh >> /đường/dẫn/omni_router/logs/backup.log 2>&1
+0 3 * * * /path/to/omni_router/backup.sh >> /path/to/omni_router/logs/backup.log 2>&1
 ```
 
-### Khôi phục
+### Restore
 
 ```bash
 docker compose down
-mv data data.old                     # giữ bản hiện tại phòng khi cần
+mv data data.old                     # keep the current data just in case
 unzip -o backups/omniroute-backup-XXXXXXXX-XXXXXX.zip -x BACKUP_INFO.txt
 docker compose up -d
 ```
 
-> Luôn khôi phục vào thư mục `data/` **trống** (vì vậy mới `mv data data.old`). Nếu các file `storage.sqlite-wal`/`-shm` cũ vẫn còn cạnh DB vừa khôi phục, SQLite có thể áp dụng nhầm chúng và làm hỏng DB.
+> Always restore into an **empty** `data/` directory (hence `mv data data.old`). If stale `storage.sqlite-wal`/`-shm` files are left next to the restored DB, SQLite may apply them and corrupt the DB.
 
-Ngoài ra OmniRoute tự backup SQLite vào `data/db_backups/` mỗi lần khởi động (tắt bằng `DISABLE_SQLITE_AUTO_BACKUP=true`).
+OmniRoute also backs up SQLite to `data/db_backups/` on startup (disable with `DISABLE_SQLITE_AUTO_BACKUP=true`).
 
-## Xử lý sự cố
+## Troubleshooting
 
-- **Lỗi permission denied trên `data/`, `logs/`, `redis/`**: thư mục bị tạo với owner root hoặc uid của bạn khác 1000. Sửa bằng `sudo chown -R 1000:1000 data logs redis`.
-- **Container `unhealthy` / bị OOM khi dùng coding agent**: tăng `OMNIROUTE_MEMORY_MB` và `CONTAINER_MEM_LIMIT` (limit luôn lớn hơn heap).
-- **Dashboard realtime không cập nhật khi truy cập qua domain/IP khác**: thêm origin đó vào `LIVE_WS_ALLOWED_ORIGINS`.
-- **Gọi `/v1/*` trả 401 `AUTH_002`**: thiếu header `Authorization: Bearer <API_KEY>` (do `REQUIRE_API_KEY=true`).
+- **Permission denied on `data/`, `logs/`, `redis/`**: the directories were created as root or your uid is not 1000. Fix with `sudo chown -R 1000:1000 data logs redis`.
+- **Container `unhealthy` / OOM when using coding agents**: increase `OMNIROUTE_MEMORY_MB` and `CONTAINER_MEM_LIMIT` (the limit must always be larger than the heap).
+- **Realtime dashboard does not update when accessed via another domain/IP**: add that origin to `LIVE_WS_ALLOWED_ORIGINS`.
+- **`/v1/*` returns 401 `AUTH_002`**: the `Authorization: Bearer <API_KEY>` header is missing (because `REQUIRE_API_KEY=true`).
 
-## Tham khảo
+## References
 
 - Repo: https://github.com/diegosouzapw/OmniRoute
 - Docker guide: https://github.com/diegosouzapw/OmniRoute/blob/main/docs/guides/DOCKER_GUIDE.md
-# omni_router

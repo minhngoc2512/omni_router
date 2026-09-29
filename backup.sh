@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  OmniRoute — backup .env + data/ thành file .zip
+#  OmniRoute — back up .env + data/ into a .zip file
 #
-#  - DB SQLite được snapshot bằng online backup API → nhất quán, KHÔNG cần dừng
-#    container (không copy thẳng storage.sqlite/-wal đang được ghi)
-#  - Kiểm tra toàn vẹn snapshot (PRAGMA quick_check) và file zip (unzip -t)
-#  - Tự xoá bớt backup cũ, giữ BACKUP_KEEP bản mới nhất
+#  - The SQLite DB is snapshotted via the online backup API → consistent, NO need
+#    to stop the container (never copies a storage.sqlite/-wal that is being written)
+#  - Verifies the snapshot (PRAGMA quick_check) and the zip file (unzip -t)
+#  - Prunes old backups, keeping the newest BACKUP_KEEP files
 #
-#  Dùng:
-#    ./backup.sh                  # backup .env, docker-compose.yml, data/
-#    ./backup.sh --with-logs      # kèm thư mục logs/
+#  Usage:
+#    ./backup.sh                  # back up .env, docker-compose.yml, data/
+#    ./backup.sh --with-logs      # also include logs/
 #    ./backup.sh -o /mnt/nas/omniroute -k 30
 #
-#  Cấu hình (đọc từ .env, tham số dòng lệnh được ưu tiên):
-#    BACKUP_DIR   thư mục chứa file zip      (mặc định ./backups)
-#    BACKUP_KEEP  số bản giữ lại, 0 = giữ hết (mặc định 7)
+#  Settings (read from .env; command-line options take precedence):
+#    BACKUP_DIR   directory for the zip files     (default ./backups)
+#    BACKUP_KEEP  number of backups to keep, 0 = keep all (default 7)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -32,8 +32,8 @@ usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 get_env() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
 abs_path() { case "$1" in /*) echo "$1" ;; *) echo "$PROJECT_DIR/${1#./}" ;; esac; }
 
-# ── Tham số ──────────────────────────────────────────────────────────────────
-[ -f "$ENV_FILE" ] || die "Không tìm thấy $ENV_FILE — chưa cài đặt? (chạy ./setup.sh)"
+# ── Arguments ────────────────────────────────────────────────────────────────
+[ -f "$ENV_FILE" ] || die "$ENV_FILE not found — not set up yet? (run ./setup.sh)"
 
 WITH_LOGS=false
 BACKUP_DIR=$(get_env BACKUP_DIR); BACKUP_DIR=${BACKUP_DIR:-./backups}
@@ -42,17 +42,17 @@ BACKUP_KEEP=$(get_env BACKUP_KEEP); BACKUP_KEEP=${BACKUP_KEEP:-7}
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-logs) WITH_LOGS=true ;;
-    -o|--output) BACKUP_DIR=${2:?thiếu đường dẫn sau $1}; shift ;;
-    -k|--keep)   BACKUP_KEEP=${2:?thiếu số lượng sau $1}; shift ;;
+    -o|--output) BACKUP_DIR=${2:?missing path after $1}; shift ;;
+    -k|--keep)   BACKUP_KEEP=${2:?missing count after $1}; shift ;;
     -h|--help)   usage 0 ;;
-    *) warn "Tham số không hợp lệ: $1"; usage 1 ;;
+    *) warn "Invalid argument: $1"; usage 1 ;;
   esac
   shift
 done
-[[ "$BACKUP_KEEP" =~ ^[0-9]+$ ]] || die "BACKUP_KEEP phải là số nguyên ≥ 0 (đang là '$BACKUP_KEEP')."
+[[ "$BACKUP_KEEP" =~ ^[0-9]+$ ]] || die "BACKUP_KEEP must be an integer ≥ 0 (got '$BACKUP_KEEP')."
 
 for cmd in zip unzip python3; do
-  command -v "$cmd" >/dev/null || die "Cần cài '$cmd' (vd: sudo apt install $cmd)."
+  command -v "$cmd" >/dev/null || die "'$cmd' is required (e.g. sudo apt install $cmd)."
 done
 
 DATA_PATH=$(abs_path "$(get_env DATA_PATH || true)"); [ "$DATA_PATH" != "$PROJECT_DIR/" ] || DATA_PATH=$PROJECT_DIR/data
@@ -60,12 +60,12 @@ LOG_PATH=$(abs_path "$(get_env LOG_PATH || true)");   [ "$LOG_PATH" != "$PROJECT
 BACKUP_DIR=$(abs_path "$BACKUP_DIR")
 DB_FILE=$DATA_PATH/storage.sqlite
 
-[ -d "$DATA_PATH" ] || die "Không tìm thấy thư mục data: $DATA_PATH"
-[ -f "$DB_FILE" ]   || die "Không tìm thấy DB: $DB_FILE"
-[ -f "$DATA_PATH/server.env" ] || warn "Thiếu $DATA_PATH/server.env (chứa key mã hoá DB) — backup sẽ không khôi phục được dữ liệu mã hoá!"
+[ -d "$DATA_PATH" ] || die "Data directory not found: $DATA_PATH"
+[ -f "$DB_FILE" ]   || die "DB not found: $DB_FILE"
+[ -f "$DATA_PATH/server.env" ] || warn "$DATA_PATH/server.env is missing (holds the DB encryption key) — encrypted data will not be recoverable from this backup!"
 
-# ── Chuẩn bị ─────────────────────────────────────────────────────────────────
-umask 077   # file zip chứa secret → chỉ owner đọc được
+# ── Preparation ──────────────────────────────────────────────────────────────
+umask 077   # the zip contains secrets → owner-only access
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 
@@ -78,25 +78,25 @@ trap 'rm -rf "$STAGE"; rm -f "$TMP_OUT"' EXIT
 
 info "Backup → $OUT"
 
-# ── 1. Snapshot SQLite (online, nhất quán) ───────────────────────────────────
+# ── 1. SQLite snapshot (online, consistent) ──────────────────────────────────
 mkdir -p "$STAGE/snapshot/data"
 python3 - "$DB_FILE" "$STAGE/snapshot/data/storage.sqlite" <<'PY'
 import sqlite3, sys
 src_path, dst_path = sys.argv[1], sys.argv[2]
 src = sqlite3.connect(src_path, timeout=60)
 dst = sqlite3.connect(dst_path)
-src.backup(dst, pages=1024)          # online backup API: an toàn khi app đang ghi
+src.backup(dst, pages=1024)          # online backup API: safe while the app is writing
 src.close()
-dst.execute("PRAGMA journal_mode=DELETE")  # file đơn, không kèm -wal/-shm
+dst.execute("PRAGMA journal_mode=DELETE")  # single file, no -wal/-shm companions
 res = dst.execute("PRAGMA quick_check").fetchone()[0]
 dst.close()
 if res != "ok":
-    sys.exit(f"quick_check thất bại: {res}")
+    sys.exit(f"quick_check failed: {res}")
 PY
-ok "Snapshot DB ($(du -h "$STAGE/snapshot/data/storage.sqlite" | cut -f1)) — quick_check: ok"
+ok "DB snapshot ($(du -h "$STAGE/snapshot/data/storage.sqlite" | cut -f1)) — quick_check: ok"
 
-# ── 2. Gom file vào zip ──────────────────────────────────────────────────────
-# Dùng symlink để trong zip luôn có đường dẫn data/, logs/ bất kể DATA_PATH thật
+# ── 2. Build the zip ─────────────────────────────────────────────────────────
+# Symlinks keep the archive paths as data/, logs/ regardless of the real DATA_PATH
 mkdir -p "$STAGE/tree"
 ln -s "$PROJECT_DIR/$ENV_FILE" "$STAGE/tree/.env"
 ln -s "$PROJECT_DIR/docker-compose.yml" "$STAGE/tree/docker-compose.yml"
@@ -107,39 +107,39 @@ if $WITH_LOGS && [ -d "$LOG_PATH" ]; then
   ITEMS+=(logs)
 fi
 
-IMAGE=$(docker inspect omniroute --format '{{.Config.Image}} ({{.Image}})' 2>/dev/null || echo "không xác định (container không chạy)")
+IMAGE=$(docker inspect omniroute --format '{{.Config.Image}} ({{.Image}})' 2>/dev/null || echo "unknown (container not running)")
 cat > "$STAGE/snapshot/BACKUP_INFO.txt" <<EOF
 OmniRoute backup
-Thời điểm : $(date '+%F %T %z')
-Máy       : $(hostname)
-Nguồn     : $PROJECT_DIR
+Created   : $(date '+%F %T %z')
+Host      : $(hostname)
+Source    : $PROJECT_DIR
 Image     : $IMAGE
-Gồm       : ${ITEMS[*]} (data/storage.sqlite là snapshot nhất quán; bỏ qua data/db_backups/)
+Contents  : ${ITEMS[*]} (data/storage.sqlite is a consistent snapshot; data/db_backups/ excluded)
 
-KHÔI PHỤC (trong thư mục dự án):
+RESTORE (inside the project directory):
   docker compose down
-  mv data data.old            # giữ lại bản hiện tại phòng khi cần
+  mv data data.old            # keep the current data just in case
   unzip -o $NAME.zip -x BACKUP_INFO.txt
   docker compose up -d
 EOF
 
 (
   cd "$STAGE/tree"
-  # Bỏ DB đang chạy (đã có snapshot), backup nội bộ của OmniRoute và cache tạm
+  # Skip the live DB (snapshot added below) and OmniRoute's own internal backups
   zip -q -r "$TMP_OUT" "${ITEMS[@]}" \
     -x 'data/storage.sqlite' 'data/storage.sqlite-*' 'data/db_backups/*'
 )
 ( cd "$STAGE/snapshot" && zip -q -r "$TMP_OUT" data/storage.sqlite BACKUP_INFO.txt )
 
-unzip -tq "$TMP_OUT" >/dev/null || die "File zip bị lỗi khi kiểm tra."
+unzip -tq "$TMP_OUT" >/dev/null || die "Zip file failed verification."
 mv "$TMP_OUT" "$OUT"
-ok "Đã tạo $(basename "$OUT") ($(du -h "$OUT" | cut -f1)), kiểm tra zip: ok"
+ok "Created $(basename "$OUT") ($(du -h "$OUT" | cut -f1)), zip check: ok"
 
-# ── 3. Xoá backup cũ ─────────────────────────────────────────────────────────
+# ── 3. Prune old backups ─────────────────────────────────────────────────────
 if [ "$BACKUP_KEEP" -gt 0 ]; then
   mapfile -t old < <(ls -1t "$BACKUP_DIR"/omniroute-backup-*.zip 2>/dev/null | tail -n +"$((BACKUP_KEEP + 1))")
   for f in "${old[@]}"; do rm -f -- "$f"; done
-  [ "${#old[@]}" -eq 0 ] || ok "Đã xoá ${#old[@]} backup cũ (giữ $BACKUP_KEEP bản mới nhất)."
+  [ "${#old[@]}" -eq 0 ] || ok "Deleted ${#old[@]} old backup(s) (keeping the newest $BACKUP_KEEP)."
 fi
 
-info "Hoàn tất. ⚠️  File chứa secret (.env) — lưu ở nơi an toàn, nên copy ra ngoài máy này."
+info "Done. ⚠️  The file contains secrets (.env) — store it safely and copy it off this machine."

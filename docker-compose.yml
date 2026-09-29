@@ -1,9 +1,9 @@
 # OmniRoute — https://github.com/diegosouzapw/OmniRoute
-# Mọi cấu hình nằm trong .env (cùng thư mục).
+# All configuration lives in .env (same directory).
 #
-#   docker compose up -d          # khởi động
-#   docker compose logs -f        # xem log
-#   docker compose pull && docker compose up -d   # cập nhật image
+#   docker compose up -d          # start
+#   docker compose logs -f        # follow logs
+#   ./update.sh                   # update the image (backup → pull → up -d)
 
 x-logging: &logging
   driver: json-file
@@ -16,11 +16,11 @@ services:
     image: diegosouzapw/omniroute:${OMNIROUTE_IMAGE_TAG:-latest}
     container_name: omniroute
     restart: unless-stopped
-    # Cho SQLite (WAL) đủ thời gian checkpoint khi dừng container
+    # Give SQLite (WAL) enough time to checkpoint when the container stops
     stop_grace_period: 40s
     env_file: .env
     environment:
-      # Các giá trị bắt buộc khớp với volume mount bên dưới
+      # Values that must match the volume mounts below
       DATA_DIR: /app/data
       APP_LOG_FILE_PATH: ${APP_LOG_FILE_PATH:-/app/logs/app.log}
       HOSTNAME: 0.0.0.0
@@ -34,21 +34,21 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # Healthcheck đã có sẵn trong image (node healthcheck.mjs → /healthz)
+    # Healthcheck is built into the image (node healthcheck.mjs → /healthz)
     logging: *logging
 
   redis:
     image: redis:8-alpine
     container_name: omniroute-redis
     restart: unless-stopped
-    # Chạy bằng uid của user host để thư mục ./redis không bị đổi owner
+    # Run as the host user's uid so ./redis keeps its ownership
     user: "1000:1000"
     command: redis-server --save 60 1 --loglevel warning
     environment:
       TZ: ${TZ:-UTC}
     volumes:
       - ${REDIS_DATA_PATH:-./redis}:/data
-    # Không publish port: chỉ omniroute truy cập qua mạng nội bộ compose
+    # No published port: only omniroute reaches it over the internal compose network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

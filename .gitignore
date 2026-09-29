@@ -1,14 +1,14 @@
-# Cấu hình chứa secret — chỉ commit .env.example
+# Configuration with secrets — only .env.example is committed
 .env
 .env.*
 !.env.example
 
-# Dữ liệu runtime (DB SQLite, key mã hoá data/server.env, log, Redis)
+# Runtime data (SQLite DB, data/server.env encryption key, logs, Redis)
 data/
 logs/
 redis/
 
-# File backup (chứa secret)
+# Backup files (contain secrets)
 backups/
 *.zip
 *.tar.gz
