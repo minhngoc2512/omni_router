@@ -7,6 +7,7 @@ Cấu hình chạy [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (AI ga
 ```
 .
 ├── docker-compose.yml   # service omniroute + redis
+├── setup.sh             # script cài đặt lần đầu (chạy lại an toàn)
 ├── .env.example         # mẫu cấu hình (commit)
 ├── .env                 # cấu hình thật + secret (KHÔNG commit)
 ├── data/                # SQLite DB, backup tự động, server.env   (tự tạo, không commit)
@@ -27,26 +28,23 @@ Cấu hình chạy [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (AI ga
 ## Cài đặt lần đầu
 
 ```bash
-# 1. Tạo file cấu hình từ mẫu
-cp .env.example .env
-chmod 600 .env
-
-# 2. Sinh secret ngẫu nhiên và ghi vào .env
-sed -i \
-  -e "s|^INITIAL_PASSWORD=.*|INITIAL_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=\n')|" \
-  -e "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')|" \
-  -e "s|^API_KEY_SECRET=.*|API_KEY_SECRET=$(openssl rand -hex 32)|" \
-  -e "s|^OMNIROUTE_WS_BRIDGE_SECRET=.*|OMNIROUTE_WS_BRIDGE_SECRET=$(openssl rand -base64 32 | tr -d '\n')|" \
-  -e "s|^MACHINE_ID_SALT=.*|MACHINE_ID_SALT=$(openssl rand -hex 16)|" \
-  .env
-
-# 3. Tạo thư mục dữ liệu trước (tránh Docker tạo với owner root)
-mkdir -p data logs redis
-
-# 4. Khởi động
+./setup.sh               # tạo .env, sinh secret, tạo thư mục data/logs/redis
 docker compose up -d
 docker compose ps        # chờ omniroute chuyển sang (healthy)
 ```
+
+`setup.sh` thực hiện:
+
+1. Tạo `.env` từ `.env.example` (chỉ khi chưa có) và `chmod 600`
+2. Sinh ngẫu nhiên các secret **đang trống**: `INITIAL_PASSWORD`, `JWT_SECRET`, `API_KEY_SECRET`, `OMNIROUTE_WS_BRIDGE_SECRET`, `MACHINE_ID_SALT`
+3. Tạo thư mục theo `DATA_PATH`, `LOG_PATH`, `REDIS_DATA_PATH` (tránh Docker tạo với owner root) và cảnh báo nếu owner khác uid 1000
+
+Có thể chạy lại bất cứ lúc nào, script tự kiểm tra trạng thái:
+
+- Không ghi đè giá trị đã có trong `.env`, không xoá hay sửa dữ liệu trong `data/`, `logs/`, `redis/`
+- Nếu đã có DB (`data/storage.sqlite`) mà **thiếu `.env`** hoặc **`API_KEY_SECRET` trống** → dừng và báo lỗi, vì sinh key mới sẽ làm hỏng API key đã mã hoá. Hãy khôi phục `.env` từ backup.
+- Bỏ qua `INITIAL_PASSWORD` nếu DB đã khởi tạo (biến này chỉ dùng ở lần chạy đầu)
+- Liệt kê các biến có trong `.env.example` nhưng `.env` chưa có (sau khi pull bản cấu hình mới)
 
 Mở http://localhost:20128 và đăng nhập bằng `INITIAL_PASSWORD` trong `.env`. Sau đó nên đổi mật khẩu tại **Settings → Security**.
 
