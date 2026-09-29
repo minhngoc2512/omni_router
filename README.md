@@ -8,11 +8,13 @@ Cấu hình chạy [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (AI ga
 .
 ├── docker-compose.yml   # service omniroute + redis
 ├── setup.sh             # script cài đặt lần đầu (chạy lại an toàn)
+├── backup.sh            # backup .env + data/ thành file .zip
 ├── .env.example         # mẫu cấu hình (commit)
 ├── .env                 # cấu hình thật + secret (KHÔNG commit)
 ├── data/                # SQLite DB, backup tự động, server.env   (tự tạo, không commit)
 ├── logs/                # app.log                                   (tự tạo, không commit)
-└── redis/               # dữ liệu Redis                             (tự tạo, không commit)
+├── redis/               # dữ liệu Redis                             (tự tạo, không commit)
+└── backups/             # file backup .zip                          (tự tạo, không commit)
 ```
 
 | Service           | Image                              | Port                                      |
@@ -122,15 +124,35 @@ docker system df -v | grep omniroute
 
 > ⚠️ **Không xoá `data/server.env`.** Lần chạy đầu, OmniRoute tự sinh key mã hoá DB (`STORAGE_ENCRYPTION_KEY`) và lưu vào file này. Mất file → không đọc được DB. Tương tự, đổi `API_KEY_SECRET` sau khi đã có dữ liệu sẽ làm hỏng các key đã lưu.
 
-Backup cần cả thư mục `data/` **và** file `.env`. Dừng container trước để SQLite ghi hết WAL:
+Dùng `backup.sh` để nén `.env`, `docker-compose.yml` và `data/` thành một file `.zip`. **Không cần dừng container.**
 
 ```bash
-docker compose stop omniroute
-tar czf omniroute-backup-$(date +%F).tar.gz data .env
-docker compose start omniroute
+./backup.sh                          # → backups/omniroute-backup-YYYYmmdd-HHMMSS.zip
+./backup.sh --with-logs              # kèm thư mục logs/
+./backup.sh -o /mnt/nas/omniroute -k 30   # thư mục đích khác, giữ 30 bản
 ```
 
-Khôi phục: giải nén vào thư mục dự án rồi `docker compose up -d`.
+- DB được snapshot bằng SQLite online backup API, nên bản backup nhất quán ngay cả khi app đang ghi. Snapshot được kiểm tra bằng `PRAGMA quick_check`, file zip được kiểm tra bằng `unzip -t`.
+- Không đưa `data/db_backups/` vào zip (đó là các bản sao DB do OmniRoute tự tạo).
+- Chỉ giữ `BACKUP_KEEP` bản mới nhất trong `BACKUP_DIR` (cấu hình ở mục 6 của `.env`).
+- File zip có quyền `600`, thư mục backup có quyền `700`. **File zip chứa secret**, nên hãy cất ở nơi an toàn và copy ra ngoài máy này. `backups/` và `*.zip` đã có trong `.gitignore`.
+
+Chạy tự động hằng ngày lúc 3h sáng (`crontab -e`):
+
+```cron
+0 3 * * * /đường/dẫn/omni_router/backup.sh >> /đường/dẫn/omni_router/logs/backup.log 2>&1
+```
+
+### Khôi phục
+
+```bash
+docker compose down
+mv data data.old                     # giữ bản hiện tại phòng khi cần
+unzip -o backups/omniroute-backup-XXXXXXXX-XXXXXX.zip -x BACKUP_INFO.txt
+docker compose up -d
+```
+
+> Luôn khôi phục vào thư mục `data/` **trống** (vì vậy mới `mv data data.old`). Nếu các file `storage.sqlite-wal`/`-shm` cũ vẫn còn cạnh DB vừa khôi phục, SQLite có thể áp dụng nhầm chúng và làm hỏng DB.
 
 Ngoài ra OmniRoute tự backup SQLite vào `data/db_backups/` mỗi lần khởi động (tắt bằng `DISABLE_SQLITE_AUTO_BACKUP=true`).
 

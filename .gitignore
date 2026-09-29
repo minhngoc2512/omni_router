@@ -8,7 +8,9 @@ data/
 logs/
 redis/
 
-# Backup tạo thủ công
+# File backup (chứa secret)
+backups/
+*.zip
 *.tar.gz
 
 # OS / editor
