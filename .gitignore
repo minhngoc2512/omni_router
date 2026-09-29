@@ -1,0 +1,19 @@
+# Cấu hình chứa secret — chỉ commit .env.example
+.env
+.env.*
+!.env.example
+
+# Dữ liệu runtime (DB SQLite, key mã hoá data/server.env, log, Redis)
+data/
+logs/
+redis/
+
+# Backup tạo thủ công
+*.tar.gz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,57 @@
+# OmniRoute — https://github.com/diegosouzapw/OmniRoute
+# Mọi cấu hình nằm trong .env (cùng thư mục).
+#
+#   docker compose up -d          # khởi động
+#   docker compose logs -f        # xem log
+#   docker compose pull && docker compose up -d   # cập nhật image
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-20m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
+services:
+  omniroute:
+    image: diegosouzapw/omniroute:${OMNIROUTE_IMAGE_TAG:-latest}
+    container_name: omniroute
+    restart: unless-stopped
+    # Cho SQLite (WAL) đủ thời gian checkpoint khi dừng container
+    stop_grace_period: 40s
+    env_file: .env
+    environment:
+      # Các giá trị bắt buộc khớp với volume mount bên dưới
+      DATA_DIR: /app/data
+      APP_LOG_FILE_PATH: ${APP_LOG_FILE_PATH:-/app/logs/app.log}
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-20128}:${PORT:-20128}"
+      - "${BIND_ADDRESS:-127.0.0.1}:${LIVE_WS_PORT:-20132}:${LIVE_WS_PORT:-20132}"
+    volumes:
+      - ${DATA_PATH:-./data}:/app/data
+      - ${LOG_PATH:-./logs}:/app/logs
+    mem_limit: ${CONTAINER_MEM_LIMIT:-3g}
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Healthcheck đã có sẵn trong image (node healthcheck.mjs → /healthz)
+    logging: *logging
+
+  redis:
+    image: redis:8-alpine
+    container_name: omniroute-redis
+    restart: unless-stopped
+    # Chạy bằng uid của user host để thư mục ./redis không bị đổi owner
+    user: "1000:1000"
+    command: redis-server --save 60 1 --loglevel warning
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ${REDIS_DATA_PATH:-./redis}:/data
+    # Không publish port: chỉ omniroute truy cập qua mạng nội bộ compose
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging: *logging
