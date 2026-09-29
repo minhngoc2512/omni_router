@@ -2,7 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  OmniRoute — first-time setup (steps 1-3 in the README)
 #    1. Create .env from .env.example
-#    2. Generate random secrets for variables that are still empty
+#    2. Generate random secrets for variables that are still empty,
+#       and set PUID/PGID (container uid/gid) to the current user if empty
 #    3. Create the data / logs / redis directories
 #
 #  Safe to re-run:
@@ -19,7 +20,6 @@ cd "$(dirname "$0")"
 
 ENV_FILE=.env
 EXAMPLE_FILE=.env.example
-CONTAINER_UID=1000   # the image runs as user `node`, uid 1000
 
 info()  { printf '\033[1;34m[setup]\033[0m %s\n' "$*"; }
 ok()    { printf '\033[1;32m[  ok ]\033[0m %s\n' "$*"; }
@@ -116,6 +116,18 @@ for key in "${ORDER[@]}"; do
   [ "$key" = INITIAL_PASSWORD ] && new_password=$value
 done
 
+# PUID/PGID: containers run as the user that owns data/, logs/, redis/
+for pair in "PUID $(id -u)" "PGID $(id -g)"; do
+  set -- $pair
+  if [ -n "$(get_env "$1")" ]; then
+    ok "$1 already set ($(get_env "$1")) — skipping."
+  else
+    set_env_if_empty "$1" "$2"
+    ok "Set $1=$2 (current user)."
+  fi
+done
+CONTAINER_UID=$(get_env PUID); CONTAINER_UID=${CONTAINER_UID:-1000}
+
 # ── Step 3: directories ──────────────────────────────────────────────────────
 for key_default in "DATA_PATH ./data" "LOG_PATH ./logs" "REDIS_DATA_PATH ./redis"; do
   set -- $key_default
@@ -128,8 +140,8 @@ for key_default in "DATA_PATH ./data" "LOG_PATH ./logs" "REDIS_DATA_PATH ./redis
   fi
   owner=$(stat -c %u "$dir")
   if [ "$owner" != "$CONTAINER_UID" ]; then
-    warn "$dir is owned by uid $owner, but the container runs as uid $CONTAINER_UID → writes may fail."
-    warn "  Fix: sudo chown -R $CONTAINER_UID:$CONTAINER_UID $dir"
+    warn "$dir is owned by uid $owner, but the containers run as PUID=$CONTAINER_UID → writes will fail."
+    warn "  Fix: set PUID/PGID in $ENV_FILE to the owner, or: sudo chown -R $CONTAINER_UID:$(get_env PGID) $dir"
   fi
 done
 

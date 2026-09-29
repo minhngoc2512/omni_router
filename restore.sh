@@ -24,7 +24,6 @@ cd "$(dirname "$0")"
 PROJECT_DIR=$(pwd)
 ENV_FILE=.env
 SERVICE=omniroute
-CONTAINER_UID=1000
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-240}   # seconds
 # Secrets that must match the restored DB (see README → Backup & restore)
 DATA_BOUND_SECRETS=(API_KEY_SECRET STORAGE_ENCRYPTION_KEY)
@@ -180,8 +179,9 @@ if ! $KEEP_ENV; then
   ok "Restored $ENV_FILE"
 fi
 
+CONTAINER_UID=$(get_env PUID "$ENV_FILE"); CONTAINER_UID=${CONTAINER_UID:-1000}
 owner=$(stat -c %u "$DATA_PATH")
-[ "$owner" = "$CONTAINER_UID" ] || warn "$DATA_PATH is owned by uid $owner, the container runs as uid $CONTAINER_UID. Fix: sudo chown -R $CONTAINER_UID:$CONTAINER_UID $DATA_PATH"
+[ "$owner" = "$CONTAINER_UID" ] || warn "$DATA_PATH is owned by uid $owner, the containers run as PUID=$CONTAINER_UID. Fix: sudo chown -R $CONTAINER_UID:$CONTAINER_UID $DATA_PATH"
 
 # ── 4. Start and wait for healthy ────────────────────────────────────────────
 info "Starting the stack …"

@@ -16,6 +16,8 @@ services:
     image: diegosouzapw/omniroute:${OMNIROUTE_IMAGE_TAG:-latest}
     container_name: omniroute
     restart: unless-stopped
+    # Run as the host user that owns data/ and logs/ (set by setup.sh; the image default is 1000)
+    user: "${PUID:-1000}:${PGID:-1000}"
     # Give SQLite (WAL) enough time to checkpoint when the container stops
     stop_grace_period: 40s
     env_file: .env
@@ -41,8 +43,8 @@ services:
     image: redis:8-alpine
     container_name: omniroute-redis
     restart: unless-stopped
-    # Run as the host user's uid so ./redis keeps its ownership
-    user: "1000:1000"
+    # Run as the host user's uid so ./redis stays writable and keeps its ownership
+    user: "${PUID:-1000}:${PGID:-1000}"
     command: redis-server --save 60 1 --loglevel warning
     environment:
       TZ: ${TZ:-UTC}

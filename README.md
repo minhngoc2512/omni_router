@@ -28,7 +28,7 @@ Runs [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (an AI gateway that 
 
 - Docker Engine + Docker Compose v2
 - `openssl`, `zip`, `unzip`, `python3` (used by the scripts)
-- The user running the commands should have **uid 1000** (the image runs as user `node`, uid 1000). If your uid differs, see [Troubleshooting](#troubleshooting).
+- Any host user in the `docker` group. The containers run as the uid/gid in `PUID`/`PGID` (`setup.sh` sets them to the user who runs it), so that user must own `data/`, `logs/`, `redis/`.
 
 ## First-time setup
 
@@ -42,7 +42,8 @@ docker compose ps        # wait until omniroute is (healthy)
 
 1. Creates `.env` from `.env.example` (only if it does not exist yet) and runs `chmod 600` on it
 2. Generates random values for secrets that are **empty**: `INITIAL_PASSWORD`, `JWT_SECRET`, `API_KEY_SECRET`, `OMNIROUTE_WS_BRIDGE_SECRET`, `MACHINE_ID_SALT`
-3. Creates the directories from `DATA_PATH`, `LOG_PATH`, `REDIS_DATA_PATH` (so Docker does not create them as root) and warns if their owner is not uid 1000
+3. Sets `PUID`/`PGID` to the current user's `id -u`/`id -g` if they are empty (the uid/gid both containers run as)
+4. Creates the directories from `DATA_PATH`, `LOG_PATH`, `REDIS_DATA_PATH` (so Docker does not create them as root) and warns if their owner differs from `PUID`
 
 It can be re-run at any time; the script checks the current state first:
 
@@ -70,6 +71,7 @@ Base URL for OpenAI-compatible clients: `http://localhost:20128/v1`
 
 | Group      | Variables                                                                                             | Notes                                                       |
 | ---------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Container  | `PUID`, `PGID`                                                                                        | uid/gid the containers run as — must own the data dirs      |
 | Image      | `OMNIROUTE_IMAGE_TAG`                                                                                 | `latest` or a pinned version (e.g. `3.8.50`)                |
 | RAM        | `OMNIROUTE_MEMORY_MB`, `CONTAINER_MEM_LIMIT`                                                          | For coding agents (Claude Code, Codex…) use `8192` / `10g`  |
 | Ports      | `BIND_ADDRESS`, `PORT`, `LIVE_WS_PORT`                                                                | `127.0.0.1` = local machine only; `0.0.0.0` = open to LAN   |
@@ -221,7 +223,8 @@ OmniRoute also backs up SQLite to `data/db_backups/` on startup (disable with `D
 
 ## Troubleshooting
 
-- **Permission denied on `data/`, `logs/`, `redis/`**: the directories were created as root or your uid is not 1000. Fix with `sudo chown -R 1000:1000 data logs redis`.
+- **`EACCES: permission denied` on `/app/data` or `/app/logs`, `data/` stays empty, `[sqljsAdapter] save failed` in the logs**: the containers' uid (`PUID`) does not own the data directories — typical on servers where the deploy user is not uid 1000. OmniRoute then keeps the DB **in memory only** and loses it on restart. Fix: set `PUID`/`PGID` in `.env` to the owner (`stat -c '%u %g' data`, or `id -u` / `id -g`), then `docker compose up -d`. Alternatively `sudo chown -R <PUID>:<PGID> data logs redis`.
+- **`getaddrinfo ENOTFOUND <your-domain>`**: the domain in `NEXT_PUBLIC_BASE_URL` has no DNS record yet (OmniRoute calls its own public URL). Create the DNS record, or use `http://localhost:20128` until it exists.
 - **Container `unhealthy` / OOM when using coding agents**: increase `OMNIROUTE_MEMORY_MB` and `CONTAINER_MEM_LIMIT` (the limit must always be larger than the heap).
 - **Realtime dashboard does not update when accessed via another domain/IP**: add that origin to `LIVE_WS_ALLOWED_ORIGINS`.
 - **`/v1/*` returns 401 `AUTH_002`**: the `Authorization: Bearer <API_KEY>` header is missing (because `REQUIRE_API_KEY=true`).
